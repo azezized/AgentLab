@@ -209,7 +209,9 @@ clicking the refresh button.
                 show_label=False,
                 scale=6,
                 container=False,
+                elem_id="experiment-directory",
             )
+
             refresh_button = gr.Button("↺", scale=0, size="sm")
 
         with gr.Tabs():
@@ -223,7 +225,12 @@ clicking the refresh button.
     The update mechanism is somewhat flacky, please help figure out why (or is it just gradio?).
     """
                     )
-                agent_table = gr.DataFrame(max_height=500, show_label=False, interactive=False)
+                agent_table = gr.DataFrame(
+                    max_height=500,
+                    show_label=False,
+                    interactive=False,
+                    elem_id="agent-table",  # Add a unique ID for Playwright
+                )
             with gr.Tab("Select Task and Seed", id="Select Task"):
                 with gr.Row():
                     with gr.Column(scale=4):
@@ -833,14 +840,45 @@ def get_seeds_df(result_df: pd.DataFrame, task_name: str):
 
 
 def on_select_agent(evt: gr.SelectData, df: pd.DataFrame):
-    # TODO try to find a clever way to solve the sort bug here
-    return info.get_agent_id(df.iloc[evt.index[0]])
+    """Handles selection of an agent from the DataFrame."""
+    try:
+        # Check if the DataFrame is empty
+        if df.empty:
+            return "No agents available."
+
+        # Check if the selected index is valid
+        if evt.index[0] >= len(df):
+            return "Selected index is out of range."
+
+        # Return the selected agent's ID
+        return info.get_agent_id(df.iloc[evt.index[0]])
+    except Exception as e:
+        # Return a meaningful error message for debugging
+        return f"Error while selecting agent: {str(e)}"
 
 
 def on_select_task(evt: gr.SelectData, df: pd.DataFrame, agent_id: list[tuple]):
-    # get col index
-    col_idx = df.columns.get_loc(TASK_NAME_KEY)
-    return (agent_id, evt.row_value[col_idx])
+    """Handles selection of a task from the DataFrame."""
+    try:
+        # Check if the DataFrame is empty
+        if df.empty:
+            return "No tasks available for the selected agent."
+
+        # Get the column index for the task name
+        col_idx = df.columns.get_loc(TASK_NAME_KEY)
+
+        # Check if the selected index is valid
+        if evt.index[0] >= len(df):
+            return "Selected index is out of range."
+
+        # Return the selected agent ID and task name
+        return (agent_id, df.iloc[evt.index[0], col_idx])
+    except KeyError as e:
+        # Handle missing columns gracefully
+        return f"Error: Missing expected column {str(e)}"
+    except Exception as e:
+        # General error handling
+        return f"Error while selecting task: {str(e)}"
 
 
 def update_seeds(agent_task_id: tuple):

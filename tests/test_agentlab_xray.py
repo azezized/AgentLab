@@ -1,59 +1,98 @@
-from playwright.sync_api import sync_playwright
 import pytest
+from playwright.sync_api import sync_playwright
+import json
+import os
 
-# SInce you need code to run under 60s
-pytestmark = pytest.mark.timeout(60) 
-
-# change the URL if needed
-URL = "http://127.0.0.1:7860/"
+BASE_URL = "http://127.0.0.1:7860/"  # Replace with the actual running URL of agentlab-xray
 
 
-def test_invalid_data_format(page):
-    """Test when the data format is invalid and ensure the page handles it gracefully."""
-    page.goto(URL)
-    page.wait_for_selector(".main.svelte-1ufy31e")
-    page.evaluate(
-        """
-        const mainContent = document.querySelector(".main.svelte-1ufy31e");
-        if (mainContent) {
-            mainContent.innerHTML = "<div>Corrupted Data</div>";
-        }
-    """
+def start_playwright():
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch(headless=True)
+    return playwright, browser
+
+
+def stop_playwright(playwright, browser):
+    browser.close()
+    playwright.stop()
+
+
+@pytest.fixture(scope="module")
+def browser():
+    playwright, browser = start_playwright()
+    yield browser
+    stop_playwright(playwright, browser)
+
+
+def load_mock_data():
+    base_dir = os.path.dirname(os.path.realpath(__file__))
+    file_path = os.path.join(
+        base_dir,
+        "data",
+        "test_study",
+        "2024-08-01_10-20-52_GenericAgent_on_miniwob.ascending-numbers_64_e6d2d5",
+        "summary_info.json",
     )
-    page.wait_for_selector(".main.svelte-1ufy31e")
-    invalid_message = page.query_selector(".main.svelte-1ufy31e")
-    assert invalid_message is not None, "The page should handle corrupted data gracefully."
+    with open(file_path, "r") as f:
+        return json.load(f)
+
+
+def test_data_loads_without_errors(browser):
+    page = browser.new_page()
+    page.goto(BASE_URL)
+
+    page.wait_for_selector("input[aria-label='Experiment Directory']", timeout=3000)
+    dropdown = page.locator("input[aria-label='Experiment Directory']")
+    dropdown.click()
+    page.wait_for_selector("ul[role='listbox']", timeout=2000)
+    page.locator(
+        "ul[role='listbox'] li:text('2024-08-01_10-20-52_GenericAgent_on_miniwob.ascending-numbers_64_e6d2d5')"
+    ).click()
+    assert page.wait_for_selector("#agent-table", timeout=3000), "Agent table did not load."
+    page.click("text=Error Report")
+    error_report = page.locator(".error-report").inner_text()
     assert (
-        "Corrupted Data" in invalid_message.text_content()
-    ), "The page did not render corrupted data correctly."
+        "No error report found" in error_report or not error_report.strip()
+    ), "Errors were found in the error report."
+    page.close()
 
 
-def test_missing_experiment_content(page):
-    """Test if the page handles missing content when an experiment is selected due to API changes."""
-    page.goto(URL)
-    experiment_dropdown = page.wait_for_selector('input[role="listbox"]')
-    experiment_dropdown.click()
-    experiment_option = page.query_selector("ul[role='listbox'] li:nth-child(1)")
-    experiment_option.click()
-    page.wait_for_timeout(3000)
-    content_box = page.query_selector("#component-41")
-    assert content_box is not None, "The experiment content was not loaded correctly."
-    element_to_remove = page.query_selector("#component-41 .some-element")
-    if element_to_remove:
-        page.evaluate('document.querySelector("#component-41 .some-element").remove()')
-    else:
-        print("The element to remove does not exist.")
-    content_box_after_removal = page.query_selector("#component-41")
-    assert (
-        content_box_after_removal is not None
-    ), "The experiment content failed to handle missing elements."
+def test_agent_selection(browser):
+    page = browser.new_page()
+    page.goto(BASE_URL)
+
+    page.wait_for_selector("input[aria-label='Experiment Directory']", timeout=3000)
+    dropdown = page.locator("input[aria-label='Experiment Directory']")
+    dropdown.click()
+    page.wait_for_selector("ul[role='listbox']", timeout=2000)
+    page.locator(
+        "ul[role='listbox'] li:text('2024-08-01_10-20-52_GenericAgent_on_miniwob.ascending-numbers_64_e6d2d5')"
+    ).click()
+    agent_table = page.locator("#agent-table")
+    assert agent_table.is_visible(), "Agent table is not visible."
+    agent_table.locator("tr").nth(1).click()
+    task_table = page.locator("#task_table")
+    seed_table = page.locator("#seed_table")
+    assert task_table.is_visible(), "Task table did not load after selecting agent."
+    assert seed_table.is_visible(), "Seed table did not load after selecting agent."
+    page.close()
 
 
-def test_no_console_error(page):
-    """Ensure no error messages are logged in the browser's console (e.g., due to data or API issues)."""
-    page.goto(URL)
-    console_logs = []
-    page.on("console", lambda msg: console_logs.append(msg.text))
-    page.wait_for_timeout(5000)
-    error_logs = [log for log in console_logs if "error" in log.lower()]
-    assert not error_logs, f"Des erreurs ont été trouvées dans les logs : {error_logs}"
+def test_profiling_tab_loads(browser):
+    page = browser.new_page()
+    page.goto(BASE_URL)
+
+    page.wait_for_selector("input[aria-label='Experiment Directory']", timeout=3000)
+    dropdown = page.locator("input[aria-label='Experiment Directory']")
+    dropdown.click()
+    page.wait_for_selector("ul[role='listbox']", timeout=2000)
+    page.locator(
+        "ul[role='listbox'] li:text('2024-08-01_10-20-52_GenericAgent_on_miniwob.ascending-numbers_64_e6d2d5')"
+    ).click()
+    page.locator("#agent-table tr").nth(1).click()
+    page.locator("#task_table tr").nth(1).click()
+    page.locator("#seed_table tr").nth(1).click()
+    page.wait_for_selector("text=Profiling", timeout=2000)
+    profiling_image = page.locator("text=Profiling")
+    assert profiling_image.is_visible(), "Profiling tab did not load."
+    page.close()
